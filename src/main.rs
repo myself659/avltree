@@ -1,29 +1,81 @@
+use itertools::equal;
+use std::cmp::max;
 use std::cmp::Ordering;
 use std::iter::{FromIterator, IntoIterator};
-use itertools::equal;
+//type AvlTree<T> = Option<Box<AvlNode<T>>>;
+use core::iter::Map;
+use std::cell::RefCell;
+use std::rc::Rc;
 
-type AvlTree<T> = Option<Box<AvlNode<T>>>;
-
+type AvlTree<'a, T> = Option<Rc<RefCell<AvlNode<'a, T>>>>;
+//type AvlTree<a,T> = Option<Rc<RefCell<AvlNode<a,T>>>>;
 #[derive(Debug, PartialEq, Clone)]
-struct AvlNode<T: Ord> {
+struct AvlNode<'a, T: Ord> {
     value: T,
-    left: AvlTree<T>,
-    right: AvlTree<T>,
+    left: AvlTree<'a, T>,
+    right: AvlTree<'a, T>,
+    height: usize,
+
+    parent_node: Option<&'a mut AvlNode<'a, T>>,
+}
+
+impl<'a, T: 'a + Ord> AvlNode<T> {
+    fn left_height(&self) -> usize {
+        self.left.as_ref().map_or(0, |left| left.height())
+    }
+
+    fn right_height(&self) -> usize {
+        self.right.as_ref().map_or(0, |right| right.height())
+    }
+
+    fn update_height(&mut self) {
+        self.height = 1 + max(self.left_height(), self.right_height());
+    }
+
+    fn height(&self) -> usize {
+        1 + max(
+            self.left.as_ref().map_or(0, |node| node.height()),
+            self.right.as_ref().map_or(0, |node| node.height()),
+        )
+    }
+
+    fn update_ancestors_height(&mut self) {
+        self.update_height();
+
+        let mut current_node = self;
+        while let Some(parent_node) = current_node.parent_node {
+            parent_node.update_height();
+            current_node = parent_node;
+        }
+    }
+
+    pub fn balance_factor(&self) -> i8 {
+        let left_height = self.left_height();
+        let right_height = self.right_height();
+
+        if left_height >= right_height {
+            (left_height - right_height) as i8
+        } else {
+            -((right_height - left_height) as i8)
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
-struct AvlTreeSet<T: Ord> {
-    root: AvlTree<T>,
+struct AvlTreeSet<'a, T: 'a+Ord> {
+    root: AvlTree<'a, T>,
 }
 
-impl<T: Ord> AvlTreeSet<T> {
+impl<'a, T: 'a + Ord> AvlTreeSet<T> {
     fn new() -> Self {
         Self { root: None }
     }
 
-    fn insert(&mut self, value: T) -> bool {
+    unsafe fn insert(&mut self, value: T) -> bool {
+        let mut prev_ptrs = Vec::<*mut AvlNode<T>>::new();
         let mut current_tree = &mut self.root;
         while let Some(current_node) = current_tree {
+            prev_ptrs.push(&mut **current_node);
             match current_node.value.cmp(&value) {
                 Ordering::Less => {
                     current_tree = &mut current_node.right;
@@ -42,14 +94,37 @@ impl<T: Ord> AvlTreeSet<T> {
             left: None,
             right: None,
         }));
+
+        for node_ptr in prev_ptrs.into_iter().rev() {
+            let node = unsafe { &mut *node_ptr }; // Converting a mutable pointer back to a reference
+            node.update_height();
+        }
         true
+    }
+    
+    fn iter(&'a self) -> impl Iterator<Item = &'a T> + 'a {
+        self.node_iter().map(|node| &node.value)
+    }
+    
+
+    fn node_iter(&'a self) -> impl Iterator<Item = &'a AvlNode<T>> + 'a {
+        AvlTreeSetNodeIter {
+            prev_nodes: Vec::default(),
+            current_tree: &self.root,
+        }
     }
 }
 
 #[derive(Debug)]
+struct AvlTreeSetNodeIter<'a, T: Ord> {
+    prev_nodes: Vec<&'a AvlNode<'a, T>>,
+    current_tree: &'a AvlTree<'a, T>,
+}
+
+#[derive(Debug)]
 struct AvlTreeSetIter<'a, T: Ord> {
-    prev_nodes: Vec<&'a AvlNode<T>>,
-    current_tree: &'a AvlTree<T>,
+    prev_nodes: Vec<&'a AvlNode<'a, T>>,
+    current_tree: &'a AvlTree<'a,T>,
 }
 
 impl<'a, T: 'a + Ord> Iterator for AvlTreeSetIter<'a, T> {
@@ -94,6 +169,7 @@ impl<'a, T: 'a + Ord> Iterator for AvlTreeSetIter<'a, T> {
 }
 
 // Addition of lifetime parameter for the set
+/*
 impl<'a, T: 'a + Ord> AvlTreeSet<T> {
     fn iter(&'a self) -> AvlTreeSetIter<'a, T> {
         AvlTreeSetIter {
@@ -102,6 +178,7 @@ impl<'a, T: 'a + Ord> AvlTreeSet<T> {
         }
     }
 }
+*/
 
 impl<T: Ord> FromIterator<T> for AvlTreeSet<T> {
     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
@@ -151,7 +228,7 @@ mod properties {
 
         // 4. Both AVL and BTree iterator should be equal item per item
         equal(avl_set.iter(), btree_set.iter())
-       
+
         //true
     }
     #[quickcheck]
