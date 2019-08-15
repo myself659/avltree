@@ -10,5 +10,5 @@ extern crate quickcheck_macros;
 pub mod set;
 mod tree;
 
-#[cfg(test)]
-mod bench;
+//#[cfg(test)]
+//mod bench;
